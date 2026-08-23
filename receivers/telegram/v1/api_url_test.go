@@ -29,6 +29,15 @@ func TestNewConfigAPIURL(t *testing.T) {
 
 		require.ErrorContains(t, err, "invalid Telegram API URL")
 	})
+
+	t.Run("rejects a non-HTTP API URL", func(t *testing.T) {
+		_, err := NewConfig(
+			json.RawMessage(`{"bottoken":"test-token","chatid":"12345678","api_url":"ftp://telegram.local"}`),
+			receiversTesting.DecryptForTesting(nil),
+		)
+
+		require.ErrorContains(t, err, "invalid Telegram API URL")
+	})
 }
 
 func TestNewWebhookSyncCmdAPIURL(t *testing.T) {
