@@ -7,11 +7,10 @@ import (
 	"mime/multipart"
 	"strings"
 
+	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/types"
-
-	"github.com/go-kit/log"
 
 	"github.com/grafana/alerting/images"
 	"github.com/grafana/alerting/receivers"
