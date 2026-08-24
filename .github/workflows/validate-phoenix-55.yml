@@ -13,7 +13,7 @@ concurrency:
 
 env:
   PHOENIX_REPOSITORY: AyobamiH/phoenix
-  PHOENIX_SHA: 987974a711c6e68aa2ad1665bfdd89f3c690ec15
+  PHOENIX_SHA: 3329ff96212e76826b6f2dc75d78109359cc0c3c
 
 jobs:
   provenance:
@@ -28,14 +28,18 @@ jobs:
           path: phoenix
           persist-credentials: false
 
-      - name: Verify commit and authoritative upstream blobs
+      - name: Verify commit and generated dependency blobs
         working-directory: phoenix
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$PHOENIX_SHA"
-          test "$(git rev-parse HEAD:mix.lock)" = "6139865bffedc0d3b38777b59125a10c7fd9dbf0"
-          test "$(git rev-parse HEAD:integration_test/mix.lock)" = "3205ae556ee5ead19a438349de9787224ef68938"
+          test "$(git rev-parse HEAD:mix.lock)" = "e49ee939a48f6f94e2b0113b115d007e097333a2"
+          test "$(git rev-parse HEAD:integration_test/mix.lock)" = "13da4c035e65ff1462ba4caa5065b6a9579aef6b"
           test "$(git rev-parse HEAD:integration_test/mix.exs)" = "df8a44665e9ff4ff3ad88930029d8db04f623c17"
+          grep -q '"bandit": {:hex, :bandit, "1.12.5"' mix.lock
+          grep -q '"bandit": {:hex, :bandit, "1.12.5"' integration_test/mix.lock
+          grep -q '"postgrex": {:hex, :postgrex, "0.22.4"' integration_test/mix.lock
+          grep -q '"phoenix_live_view": {:hex, :phoenix_live_view, "1.2.10"' integration_test/mix.lock
 
   mix_test:
     name: mix test (OTP ${{ matrix.otp }} | Elixir ${{ matrix.elixir }})
@@ -226,7 +230,7 @@ jobs:
         run: git diff --exit-code -- integration_test/mix.lock
 
   audit_snapshot:
-    name: dependency audit snapshot
+    name: dependency audit boundary
     runs-on: ubuntu-24.04
     env:
       MIX_ENV: test
@@ -254,16 +258,34 @@ jobs:
         working-directory: phoenix
         run: mix deps.get --only test
 
-      - name: Root Hex audit snapshot
-        continue-on-error: true
+      - name: Require only the three known Cowlib advisories in root graph
         working-directory: phoenix
-        run: mix hex.audit
+        shell: bash
+        run: |
+          set +e
+          mix hex.audit > /tmp/root-audit.txt 2>&1
+          status=$?
+          set -e
+          cat /tmp/root-audit.txt
+          test "$status" -ne 0
+          test "$(grep -Ec '^  [^ ]+ [^ ]+ - EEF-CVE-' /tmp/root-audit.txt)" -eq 3
+          test "$(grep -c '^  cowlib 2.19.0 - EEF-CVE-' /tmp/root-audit.txt)" -eq 3
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43969' /tmp/root-audit.txt
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43971' /tmp/root-audit.txt
+          grep -q '^  cowlib 2.19.0 - EEF-CVE-2026-43966' /tmp/root-audit.txt
+
+      - name: Prove audit did not mutate root lockfile
+        working-directory: phoenix
+        run: git diff --exit-code -- mix.lock
 
       - name: Fetch integration-test dependencies
         working-directory: phoenix/integration_test
         run: mix deps.get
 
-      - name: Integration-test Hex audit snapshot
-        continue-on-error: true
+      - name: Require clean integration-test advisory state
         working-directory: phoenix/integration_test
         run: mix hex.audit
+
+      - name: Prove audit did not mutate integration lockfile
+        working-directory: phoenix
+        run: git diff --exit-code -- integration_test/mix.lock
