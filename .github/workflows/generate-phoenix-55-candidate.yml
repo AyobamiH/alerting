@@ -51,10 +51,18 @@ jobs:
           git diff -- mix.lock integration_test/mix.lock integration_test/mix.exs | tee /tmp/candidate.diff
           test -s /tmp/candidate.diff
 
+      - name: Fetch complete root graph for audit
+        working-directory: phoenix
+        run: mix deps.get --only test
+
       - name: Root audit snapshot
         continue-on-error: true
         working-directory: phoenix
         run: mix hex.audit | tee /tmp/root-audit.txt
+
+      - name: Fetch complete integration graph for audit
+        working-directory: phoenix/integration_test
+        run: mix deps.get
 
       - name: Integration audit snapshot
         continue-on-error: true
