@@ -1,4 +1,4 @@
-name: Generate Phoenix dependency candidate
+name: Generate Phoenix targeted dependency candidate
 
 on:
   pull_request:
@@ -13,7 +13,7 @@ env:
 
 jobs:
   generate:
-    name: resolve current compatible dependency graphs
+    name: resolve minimal security dependency graph
     runs-on: ubuntu-24.04
     env:
       MIX_ENV: test
@@ -33,13 +33,13 @@ jobs:
           elixir-version: "1.19.5"
           otp-version: "28.5.0.2"
 
-      - name: Resolve current root graph
+      - name: Resolve root Bandit security update only
         working-directory: phoenix
-        run: mix deps.update --all
+        run: mix deps.update bandit
 
-      - name: Resolve current integration-test graph
+      - name: Resolve integration security updates only
         working-directory: phoenix/integration_test
-        run: mix deps.update --all
+        run: mix deps.update bandit postgrex phoenix_live_view
 
       - name: Check changed Mix file formatting
         working-directory: phoenix
@@ -74,7 +74,7 @@ jobs:
       - name: Upload generated candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: phoenix-55-current-candidate
+          name: phoenix-55-targeted-candidate
           path: candidate
           if-no-files-found: error
           retention-days: 1
