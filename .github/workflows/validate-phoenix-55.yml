@@ -221,13 +221,17 @@ jobs:
           path: phoenix
           persist-credentials: false
 
+      - name: Snapshot integration lockfile checksum
+        working-directory: phoenix
+        run: sha256sum integration_test/mix.lock > /tmp/integration-mix-lock.sha256
+
       - name: Run Supabase integration test script
         working-directory: phoenix
         run: ./integration_test/test.sh
 
       - name: Prove integration lockfile remains stable
         working-directory: phoenix
-        run: git diff --exit-code -- integration_test/mix.lock
+        run: sha256sum -c /tmp/integration-mix-lock.sha256
 
   audit_snapshot:
     name: dependency audit boundary
