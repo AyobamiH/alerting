@@ -1,0 +1,80 @@
+name: Generate Phoenix dependency candidate
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  PHOENIX_REPOSITORY: AyobamiH/phoenix
+  PHOENIX_SHA: 987974a711c6e68aa2ad1665bfdd89f3c690ec15
+
+jobs:
+  generate:
+    name: resolve current compatible dependency graphs
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      PHX_CI: true
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.5.0.2"
+
+      - name: Resolve current root graph
+        working-directory: phoenix
+        run: mix deps.update --all
+
+      - name: Resolve current integration-test graph
+        working-directory: phoenix/integration_test
+        run: mix deps.update --all
+
+      - name: Check changed Mix file formatting
+        working-directory: phoenix
+        run: mix format --check-formatted integration_test/mix.exs
+
+      - name: Capture candidate diff
+        working-directory: phoenix
+        run: |
+          git diff -- mix.lock integration_test/mix.lock integration_test/mix.exs | tee /tmp/candidate.diff
+          test -s /tmp/candidate.diff
+
+      - name: Root audit snapshot
+        continue-on-error: true
+        working-directory: phoenix
+        run: mix hex.audit | tee /tmp/root-audit.txt
+
+      - name: Integration audit snapshot
+        continue-on-error: true
+        working-directory: phoenix/integration_test
+        run: mix hex.audit | tee /tmp/integration-audit.txt
+
+      - name: Stage generated evidence
+        run: |
+          mkdir -p candidate/integration_test
+          cp phoenix/mix.lock candidate/mix.lock
+          cp phoenix/integration_test/mix.lock candidate/integration_test/mix.lock
+          cp phoenix/integration_test/mix.exs candidate/integration_test/mix.exs
+          cp /tmp/candidate.diff candidate/candidate.diff
+          cp /tmp/root-audit.txt candidate/root-audit.txt
+          cp /tmp/integration-audit.txt candidate/integration-audit.txt
+
+      - name: Upload generated candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: phoenix-55-current-candidate
+          path: candidate
+          if-no-files-found: error
+          retention-days: 1
