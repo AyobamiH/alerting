@@ -1,0 +1,269 @@
+name: Validate Phoenix security backport
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: phoenix-55-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  PHOENIX_REPOSITORY: AyobamiH/phoenix
+  PHOENIX_SHA: 987974a711c6e68aa2ad1665bfdd89f3c690ec15
+
+jobs:
+  provenance:
+    name: exact-tree provenance
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Verify commit and authoritative upstream blobs
+        working-directory: phoenix
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$PHOENIX_SHA"
+          test "$(git rev-parse HEAD:mix.lock)" = "6139865bffedc0d3b38777b59125a10c7fd9dbf0"
+          test "$(git rev-parse HEAD:integration_test/mix.lock)" = "3205ae556ee5ead19a438349de9787224ef68938"
+          test "$(git rev-parse HEAD:integration_test/mix.exs)" = "df8a44665e9ff4ff3ad88930029d8db04f623c17"
+
+  mix_test:
+    name: mix test (OTP ${{ matrix.otp }} | Elixir ${{ matrix.elixir }})
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      PHX_CI: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.15.8"
+            otp: "25.3.2.21"
+            lint: false
+          - elixir: "1.18.4"
+            otp: "27.3.4.13"
+            lint: false
+          - elixir: "1.19.5"
+            otp: "28.5.0.2"
+            lint: true
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Install dependencies
+        working-directory: phoenix
+        run: mix deps.get --only test
+
+      - name: Prove root lockfile remains stable
+        working-directory: phoenix
+        run: git diff --exit-code -- mix.lock
+
+      - name: Remove compiled application files
+        working-directory: phoenix
+        run: mix clean
+
+      - name: Compile with warnings as errors
+        if: ${{ matrix.lint }}
+        working-directory: phoenix
+        run: mix compile --warnings-as-errors
+
+      - name: Run tests
+        working-directory: phoenix
+        run: mix test
+
+  installer_test:
+    name: installer test (OTP ${{ matrix.otp }} | Elixir ${{ matrix.elixir }})
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      PHX_CI: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.17.3"
+            otp: "25.3.2.21"
+          - elixir: "1.19.5"
+            otp: "28.5.0.2"
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: ${{ matrix.elixir }}
+          otp-version: ${{ matrix.otp }}
+
+      - name: Install installer dependencies
+        working-directory: phoenix/installer
+        run: mix deps.get
+
+      - name: Run installer unit tests
+        working-directory: phoenix/installer
+        run: mix test
+
+      - name: Install root dependencies
+        working-directory: phoenix
+        run: mix deps.get --only test
+
+      - name: Run mix_phx_new generator integration tests
+        working-directory: phoenix
+        run: mix test --only mix_phx_new
+
+  npm_test:
+    name: npm test, lint and types
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Set up Node.js 24.x
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24.x
+
+      - name: Install locked npm dependencies
+        working-directory: phoenix
+        run: npm ci
+
+      - name: Lint
+        working-directory: phoenix
+        run: npm run lint
+
+      - name: Run tests
+        working-directory: phoenix
+        run: npm test
+
+      - name: Build TypeScript declarations
+        working-directory: phoenix
+        run: npm run build.types
+
+  integration_test_elixir:
+    name: integration test (${{ matrix.elixir }}, OTP ${{ matrix.otp }}, ${{ matrix.suffix }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - elixir: "1.17.3"
+            otp: "25.3.2.21"
+            suffix: "alpine-3.22.4"
+          - elixir: "1.19.5"
+            otp: "28.3.3"
+            suffix: "alpine-3.23.4"
+    container:
+      image: hexpm/elixir:${{ matrix.elixir }}-erlang-${{ matrix.otp }}-${{ matrix.suffix }}
+      env:
+        ELIXIR_ASSERT_TIMEOUT: 10000
+        PHX_CI: true
+    services:
+      postgres:
+        image: postgres
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+      mysql:
+        image: mysql
+        ports:
+          - 3306:3306
+        env:
+          MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+      mssql:
+        image: mcr.microsoft.com/mssql/server:2019-latest
+        env:
+          ACCEPT_EULA: Y
+          SA_PASSWORD: some!Password
+        ports:
+          - 1433:1433
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Run Supabase integration test script
+        working-directory: phoenix
+        run: ./integration_test/test.sh
+
+      - name: Prove integration lockfile remains stable
+        working-directory: phoenix
+        run: git diff --exit-code -- integration_test/mix.lock
+
+  audit_snapshot:
+    name: dependency audit snapshot
+    runs-on: ubuntu-24.04
+    env:
+      MIX_ENV: test
+      PHX_CI: true
+    steps:
+      - name: Checkout exact Phoenix head
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          repository: ${{ env.PHOENIX_REPOSITORY }}
+          ref: ${{ env.PHOENIX_SHA }}
+          path: phoenix
+          persist-credentials: false
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: "1.19.5"
+          otp-version: "28.5.0.2"
+
+      - name: Check formatting of changed Mix project file
+        working-directory: phoenix
+        run: mix format --check-formatted integration_test/mix.exs
+
+      - name: Fetch root dependencies
+        working-directory: phoenix
+        run: mix deps.get --only test
+
+      - name: Root Hex audit snapshot
+        continue-on-error: true
+        working-directory: phoenix
+        run: mix hex.audit
+
+      - name: Fetch integration-test dependencies
+        working-directory: phoenix/integration_test
+        run: mix deps.get
+
+      - name: Integration-test Hex audit snapshot
+        continue-on-error: true
+        working-directory: phoenix/integration_test
+        run: mix hex.audit
