@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -12,7 +13,10 @@ import (
 	"github.com/grafana/alerting/templates"
 )
 
-const Version = schema.V1
+const (
+	Type    = schema.TelegramType
+	Version = schema.V1
+)
 
 const DefaultTelegramParseMode = "HTML"
 
@@ -21,6 +25,7 @@ const DefaultTelegramParseMode = "HTML"
 var SupportedParseMode = map[string]string{"Markdown": "Markdown", "MarkdownV2": "MarkdownV2", DefaultTelegramParseMode: "HTML", "None": ""}
 
 type Config struct {
+	APIURL                string `json:"api_url,omitempty" yaml:"api_url,omitempty"`
 	BotToken              string `json:"bottoken,omitempty" yaml:"bottoken,omitempty"`
 	ChatID                string `json:"chatid,omitempty" yaml:"chatid,omitempty"`
 	MessageThreadID       string `json:"message_thread_id,omitempty" yaml:"message_thread_id,omitempty"`
@@ -33,6 +38,7 @@ type Config struct {
 
 func NewConfig(jsonData json.RawMessage, decryptFn receivers.DecryptFunc) (Config, error) {
 	raw := struct {
+		APIURL                string                   `json:"api_url,omitempty" yaml:"api_url,omitempty"`
 		BotToken              string                   `json:"bottoken,omitempty" yaml:"bottoken,omitempty"`
 		ChatID                receivers.OptionalNumber `json:"chatid,omitempty" yaml:"chatid,omitempty"`
 		MessageThreadID       receivers.OptionalNumber `json:"message_thread_id,omitempty" yaml:"message_thread_id,omitempty"`
@@ -47,6 +53,7 @@ func NewConfig(jsonData json.RawMessage, decryptFn receivers.DecryptFunc) (Confi
 	}
 
 	settings := Config{
+		APIURL:                raw.APIURL,
 		Message:               raw.Message,
 		ParseMode:             raw.ParseMode,
 		DisableWebPagePreview: raw.DisableWebPagePreview,
@@ -62,6 +69,14 @@ func NewConfig(jsonData json.RawMessage, decryptFn receivers.DecryptFunc) (Confi
 	settings.ChatID = raw.ChatID.String()
 	if settings.ChatID == "" {
 		return settings, errors.New("could not find Chat Id in settings")
+	}
+
+	if settings.APIURL != "" {
+		u, err := url.Parse(settings.APIURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.ForceQuery || u.RawQuery != "" || u.Fragment != "" {
+			return settings, fmt.Errorf("invalid Telegram API URL %q", settings.APIURL)
+		}
+		settings.APIURL = strings.TrimRight(u.String(), "/")
 	}
 
 	if settings.Message == "" {
@@ -96,27 +111,27 @@ func NewConfig(jsonData json.RawMessage, decryptFn receivers.DecryptFunc) (Confi
 	return settings, nil
 }
 
-var Factory = receivers.IntegrationVersionFactory{
-	Version: Version,
-	Type:    schema.TelegramType,
-	ValidateConfig: func(message json.RawMessage, decryptFunc receivers.DecryptFunc) error {
-		_, err := NewConfig(message, decryptFunc)
-		return err
-	},
-	NewNotifier: func(message json.RawMessage, decryptFunc receivers.DecryptFunc, m receivers.Metadata, opts receivers.NotifierOpts) (receivers.NotificationChannel, error) {
-		cfg, err := NewConfig(message, decryptFunc)
-		if err != nil {
-			return nil, err
-		}
+var Factory = receivers.NewIntegrationVersionFactory(
+	Type, Version, NewConfig,
+	func(cfg Config, m receivers.Metadata, opts receivers.NotifierOpts) (receivers.NotificationChannel, error) {
 		ch := New(cfg, m, opts.Template, opts.Sender, opts.Images, opts.Logger)
 		return ch, nil
 	},
-}
+)
 
 var Schema = schema.NewIntegrationSchemaVersion(schema.IntegrationSchemaVersion{
 	Version:   Version,
 	CanCreate: true,
 	Options: []schema.Field{
+		{
+			Label:        "API URL",
+			Element:      schema.ElementTypeInput,
+			InputType:    schema.InputTypeText,
+			Placeholder:  "https://api.telegram.org",
+			Description:  "Telegram Bot API base URL. Leave empty to use the default Telegram API.",
+			PropertyName: "api_url",
+			Protected:    true,
+		},
 		{
 			Label:        "BOT API Token",
 			Element:      schema.ElementTypeInput,
